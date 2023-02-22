@@ -1,0 +1,13 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "sam-stack"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-1k904k8dkdyjw"
+s3_prefix = "sam-stack"
+region = "eu-central-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+disable_rollback = true
+parameter_overrides = "APIName=\"stellarobjects\" APIKeyExpiration=\"1692624013\""
+image_repositories = []

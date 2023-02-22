@@ -1,0 +1,344 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: GraphQL-based API for an arbitrary web application
+
+Resources:
+  
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref APIName
+      ProvisionedThroughput:
+        WriteCapacityUnits: 5
+        ReadCapacityUnits: 5
+      AttributeDefinitions:
+        - AttributeName: "identifier"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "identifier"
+          KeyType: "HASH"
+
+  LambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: CoordinateLambdaFunction
+      Handler: index.handler
+      Runtime: nodejs14.x
+      Role: !GetAtt RoleLambdaFunction.Arn
+      MemorySize: 512
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            var identifier = event.identifier;
+            if(identifier){
+              return "Coordinates of object: " + identifier + " in space are: " + (Math.random() * 99999) + " -- " + (Math.random() * 99999) + " -- " + (Math.random() * 99999);
+            }
+            return "Not a Stellar Object";
+          }
+
+  RoleLambdaFunction:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: AppendToLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+
+  RoleAppSyncLambda:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Ref PolicyLambda
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+
+  PolicyLambda:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Path: /service-role/
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource:
+              - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunction}
+
+  RoleAppSyncCloudWatch:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSAppSyncPushToCloudWatchLogs"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+
+  RoleAppSyncDynamoDB:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Ref PolicyDynamoDB
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+
+  PolicyDynamoDB:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Path: /service-role/
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:Query
+              - dynamodb:GetItem
+              - dynamodb:Scan
+              - dynamodb:PutItem
+              - dynamodb:DeleteItem
+            Resource:
+              - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDBTable}
+
+  GraphQLApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      Name: !Ref APIName
+      AuthenticationType: API_KEY
+      LogConfig:
+        CloudWatchLogsRoleArn: !GetAtt RoleAppSyncCloudWatch.Arn
+        ExcludeVerboseContent: FALSE
+        FieldLogLevel: ALL
+
+  GraphQLApiSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      Definition: |
+        schema {
+          query: Query
+          mutation: Mutation
+        }
+
+        type StellarObject {
+          identifier: String
+          type: String
+          galaxy: String
+        }
+        
+        input AddStellarObjectInput {
+          identifier: String!
+          type: String
+          galaxy: String
+        }
+        
+        input UpdateStellarObjectInput {
+          identifier: String!
+          type: String
+          galaxy: String
+        }
+        
+        type Mutation {
+          addStellarObject(input: AddStellarObjectInput!): StellarObject
+          updateStellarObject(input: UpdateStellarObjectInput!): StellarObject
+          deleteStellarObject(identifier: String!): StellarObject
+        }
+        
+        type Query {
+          getStellarObject(identifier: String!): StellarObject
+          getStellarObjects(identifier: String): [StellarObject]
+          getStellarObjectCoordinates(identifier: String!): String
+        }
+  
+  GraphQLDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      Name: !Ref APIName
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn: !GetAtt RoleAppSyncDynamoDB.Arn
+      DynamoDBConfig:
+        TableName: !Ref DynamoDBTable
+        AwsRegion: !Sub ${AWS::Region}
+
+  LambdaDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      Name: LambdaDS
+      Type: AWS_LAMBDA
+      ServiceRoleArn: !GetAtt RoleAppSyncLambda.Arn
+      LambdaConfig:
+        LambdaFunctionArn: !GetAtt LambdaFunction.Arn
+
+  AppSyncResolverGetStellarObject:
+    Type: AWS::AppSync::Resolver
+    DependsOn: GraphQLApiSchema
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      TypeName: Query
+      FieldName: getStellarObject
+      DataSourceName: !GetAtt GraphQLDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version": "2017-02-28",
+          "operation": "GetItem",
+          "key": {
+            "identifier": $util.dynamodb.toDynamoDBJson($ctx.args.identifier),
+          },
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+
+  AppSyncResolverGetStellarObjects:
+    Type: AWS::AppSync::Resolver
+    DependsOn: GraphQLApiSchema
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      TypeName: Query
+      FieldName: getStellarObjects
+      DataSourceName: !GetAtt GraphQLDataSource.Name
+      RequestMappingTemplate: >
+        {
+            "version" : "2017-02-28",
+            "operation" : "Scan",
+            ## Add 'limit' and 'nextToken' arguments to this field in your schema to implement pagination. **
+            ## "limit": $util.defaultIfNull(${ctx.args.limit}, 20),
+            ## "nextToken": $util.toJson($util.defaultIfNullOrBlank($ctx.args.nextToken, null))
+        }
+      ResponseMappingTemplate: $util.toJson($ctx.result.items)
+
+  AppSyncResolverGetStellarObjectCoordinates:
+    Type: AWS::AppSync::Resolver
+    DependsOn: GraphQLApiSchema
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      TypeName: Query
+      FieldName: getStellarObjectCoordinates
+      DataSourceName: !GetAtt LambdaDataSource.Name
+      RequestMappingTemplate: >
+        {
+            "version" : "2017-02-28",
+            "operation": "Invoke",
+            "payload": $util.toJson($context.arguments)
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+
+  AppSyncResolverAddStellarObject:
+    Type: AWS::AppSync::Resolver
+    DependsOn: GraphQLApiSchema
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      TypeName: Mutation
+      FieldName: addStellarObject
+      DataSourceName: !GetAtt GraphQLDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version": "2017-02-28",
+          "operation": "PutItem",
+          "key": {
+            "identifier": $util.dynamodb.toDynamoDBJson($ctx.args.input.identifier)
+          },
+          "attributeValues": $util.dynamodb.toMapValuesJson($ctx.args.input),
+          "condition": {
+            "expression": "attribute_not_exists(#identifier)",
+            "expressionNames": {
+              "#identifier": "identifier"
+            },
+          },
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+
+  AppSyncResolverUpdateStellarObject:
+    Type: AWS::AppSync::Resolver
+    DependsOn: GraphQLApiSchema
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      TypeName: Mutation
+      FieldName: updateStellarObject
+      DataSourceName: !GetAtt GraphQLDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version": "2017-02-28",
+          "operation": "PutItem",
+          "key": {
+            "identifier": $util.dynamodb.toDynamoDBJson($ctx.args.input.identifier)
+          },
+          "attributeValues": $util.dynamodb.toMapValuesJson($ctx.args.input),
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+
+  AppSyncResolverDeleteStellarObject:
+    Type: AWS::AppSync::Resolver
+    DependsOn: GraphQLApiSchema
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      TypeName: Mutation
+      FieldName: deleteStellarObject
+      DataSourceName: !GetAtt GraphQLDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version": "2017-02-28",
+          "operation": "DeleteItem",
+          "key": {
+            "identifier": $util.dynamodb.toDynamoDBJson($ctx.args.identifier)
+          },
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+
+  AppSyncAPIKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      Expires: !Ref APIKeyExpiration
+
+Parameters:
+  APIName:
+    Type: String
+  APIKeyExpiration:
+    Type: Number
+
+Outputs:
+  APIKey:
+    Description: API Key
+    Value: !GetAtt AppSyncAPIKey.ApiKey
+
+  GraphQL:
+    Description: GraphQL URL
+    Value: !GetAtt GraphQLApi.GraphQLUrl
