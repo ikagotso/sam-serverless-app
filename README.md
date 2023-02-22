@@ -38,7 +38,7 @@ and Lambda Function.
 
         type Query {
             getStellarObject(identifier: String!): StellarObject
-            getStellarObjects(identifier: String): [StellarObject]
+            getStellarObjects: [StellarObject]
             getStellarObjectCoordinates(identifier: String!): String
         }
 ```
