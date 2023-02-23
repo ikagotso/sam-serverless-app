@@ -19,48 +19,18 @@ Resources:
           KeyType: "HASH"
 
   LambdaFunction:
-    Type: 'AWS::Lambda::Function'
+    Type: AWS::Serverless::Function
     Properties:
-      FunctionName: CoordinateLambdaFunction
-      Handler: index.handler
-      Runtime: nodejs14.x
-      Role: !GetAtt RoleLambdaFunction.Arn
+      CodeUri: LambdaFunction
+      Handler: lambda.App::handleRequest
+      Runtime: java11
+      Architectures:
+        - x86_64
       MemorySize: 512
-      Code:
-        ZipFile: |
-          exports.handler = async (event) => {
-            var identifier = event.identifier;
-            if(identifier){
-              return "Coordinates of object: " + identifier + " in space are: " + (Math.random() * 99999) + " -- " + (Math.random() * 99999) + " -- " + (Math.random() * 99999);
-            }
-            return "Not a Stellar Object";
-          }
-
-  RoleLambdaFunction:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - lambda.amazonaws.com
-            Action:
-              - sts:AssumeRole
-      Path: "/"
-      Policies:
-        - PolicyName: AppendToLogsPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: "*"
-
+      Environment:
+        Variables:
+          PARAM1: VALUE
+          JAVA_TOOL_OPTIONS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1
 
   RoleAppSyncLambda:
     Type: AWS::IAM::Role
