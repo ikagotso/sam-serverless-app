@@ -19,13 +19,10 @@ import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent
  */
 public class App implements RequestHandler<APIGatewayProxyRequestEvent, String> {
     Random random = new Random();
-    public String handleRequest(final APIGatewayProxyRequestEvent input, final Context context) {
-        try {
 
-            return "Coordinates of object in space are: " + random.nextDouble()
-                + " -- " + random.nextDouble() + " -- " + random.nextDouble();
-        } catch (IOException e) {
-            return e.getMessage();
-        }
+    public String handleRequest(final APIGatewayProxyRequestEvent input, final Context context) {
+        return "Coordinates of object in space are: " + random.nextDouble()
+            + " -- " + random.nextDouble() + " -- " + random.nextDouble();
+
     }
 }
